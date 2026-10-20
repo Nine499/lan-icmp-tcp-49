@@ -153,10 +153,10 @@ async def tcp_scan(
     timeout: float = 0.5,
     concurrency: int = 2048,
 ) -> int:
-    """对每个 (ip, port) 做 TCP connect，任一端口开放即收录，按 IP 升序打印。返回数量。"""
+    """对每个 (ip, port) 做 TCP connect，开放的按 `ip:端口 毫秒` 打印。返回开放条数。"""
     sem = asyncio.Semaphore(concurrency)
     lock = asyncio.Lock()
-    up: dict[str, float] = {}
+    up: dict[tuple[str, int], float] = {}
 
     async def probe(host: str, port: int) -> None:
         async with sem:
@@ -165,7 +165,7 @@ async def tcp_scan(
                 _, writer = await asyncio.wait_for(
                     asyncio.open_connection(host, port), timeout
                 )
-            except OSError, TimeoutError:
+            except (OSError, TimeoutError):
                 return
             ms = (time.perf_counter() - t0) * 1000
             writer.close()
@@ -174,9 +174,11 @@ async def tcp_scan(
             except OSError:
                 pass
             async with lock:
-                if host not in up or ms < up[host]:
-                    up[host] = ms
+                up[(host, port)] = ms
 
     await asyncio.gather(*(probe(h, p) for h in targets for p in ports))
-    _print_results(up)
+    for (ip, port), ms in sorted(
+        up.items(), key=lambda kv: (int(ipaddress.ip_address(kv[0][0])), kv[0][1])
+    ):
+        print(f"{ip}:{port} {ms:.0f}ms", flush=True)
     return len(up)

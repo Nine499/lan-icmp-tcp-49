@@ -1,6 +1,6 @@
 [project]
 name = "lit4"
-version = "20261020.0914.3174"
+version = "20261020.1334.5661"
 description = "局域网 ICMP/TCP 快速扫描工具，无需 root"
 readme = "README.md"
 authors = [
