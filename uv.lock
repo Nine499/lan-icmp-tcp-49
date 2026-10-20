@@ -1,0 +1,8 @@
+version = 1
+revision = 5
+requires-python = ">=3.14"
+
+[[package]]
+name = "lit4"
+version = "20261020.905.1335"
+source = { editable = "." }

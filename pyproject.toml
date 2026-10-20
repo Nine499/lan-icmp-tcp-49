@@ -1,0 +1,17 @@
+[project]
+name = "lit4"
+version = "20261020.0905.1335"
+description = "局域网 ICMP/TCP 快速扫描工具，无需 root"
+readme = "README.md"
+authors = [
+    { name = "Nine499", email = "14026156+Nine499@users.noreply.github.com" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+lit4 = "lit4.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
