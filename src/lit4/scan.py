@@ -8,6 +8,7 @@ import os
 import socket
 import struct
 import sys
+import time
 from collections.abc import Iterable
 
 
@@ -59,10 +60,16 @@ def _echo_request(ident: int) -> bytes:
     return struct.pack("!BBHHH", 8, 0, csum, ident, 0) + payload
 
 
+def _print_results(results: dict[str, float]) -> None:
+    """results: IP -> 毫秒，按 IP 由小到大打印一行一个。"""
+    for ip in sorted(results, key=lambda s: int(ipaddress.ip_address(s))):
+        print(f"{ip} {results[ip]:.0f}ms", flush=True)
+
+
 async def icmp_scan(
     targets: list[str], timeout: float = 1.5, idle: float = 0.15
 ) -> int:
-    """对 targets 发 ICMP echo，逐行打印有响应的 IP。返回数量。"""
+    """对 targets 发 ICMP echo，按 IP 升序打印 `ip 毫秒`。返回数量。"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
         sock.bind(("", 0))
@@ -76,7 +83,8 @@ async def icmp_scan(
 
     loop = asyncio.get_running_loop()
     ident = os.getpid() & 0xFFFF
-    seen: set[str] = set()
+    sent_at: dict[str, float] = {}
+    found: dict[str, float] = {}
     last_recv = loop.time()
 
     async def receiver() -> None:
@@ -90,10 +98,9 @@ async def icmp_scan(
             if len(data) < 8 or data[0] != 0:  # 0 = echo reply
                 continue
             ip = addr[0]
-            if ip not in seen:
-                seen.add(ip)
+            if ip not in found and ip in sent_at:
+                found[ip] = (loop.time() - sent_at[ip]) * 1000
                 last_recv = loop.time()
-                print(ip, flush=True)
 
     recv_task = asyncio.create_task(receiver())
     try:
@@ -103,11 +110,15 @@ async def icmp_scan(
         for ip in targets:
             try:
                 sock.sendto(packet, (ip, 0))
+                sent_at[ip] = loop.time()
             except BlockingIOError:
                 pending.append(ip)
             except OSError:
                 pass  # 不可达等，忽略
         if pending:
+            queued_at = loop.time()
+            for ip in pending:
+                sent_at[ip] = queued_at
             try:
                 await asyncio.wait_for(
                     asyncio.gather(
@@ -125,13 +136,15 @@ async def icmp_scan(
             now = loop.time()
             if now - start >= timeout:
                 break
-            if seen and now - last_recv >= idle:
+            if found and now - last_recv >= idle:
                 break
             await asyncio.sleep(0.02)
     finally:
         recv_task.cancel()
         sock.close()
-    return len(seen)
+
+    _print_results(found)
+    return len(found)
 
 
 async def tcp_scan(
@@ -140,28 +153,30 @@ async def tcp_scan(
     timeout: float = 0.5,
     concurrency: int = 2048,
 ) -> int:
-    """对每个 (ip, port) 做 TCP connect，任一端口开放即打印该 IP 一次。返回数量。"""
+    """对每个 (ip, port) 做 TCP connect，任一端口开放即收录，按 IP 升序打印。返回数量。"""
     sem = asyncio.Semaphore(concurrency)
     lock = asyncio.Lock()
-    up: set[str] = set()
+    up: dict[str, float] = {}
 
     async def probe(host: str, port: int) -> None:
         async with sem:
+            t0 = time.perf_counter()
             try:
                 _, writer = await asyncio.wait_for(
                     asyncio.open_connection(host, port), timeout
                 )
             except OSError, TimeoutError:
                 return
+            ms = (time.perf_counter() - t0) * 1000
             writer.close()
             try:
                 await writer.wait_closed()
             except OSError:
                 pass
             async with lock:
-                if host not in up:
-                    up.add(host)
-                    print(host, flush=True)
+                if host not in up or ms < up[host]:
+                    up[host] = ms
 
     await asyncio.gather(*(probe(h, p) for h in targets for p in ports))
+    _print_results(up)
     return len(up)
